@@ -1,0 +1,33 @@
+{
+  "name": "win-lite-backend",
+  "version": "1.0.0",
+  "description": "Zero-dependency lightweight Node.js REST backend for 32-bit and 64-bit Windows",
+  "private": true,
+  "main": "src/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KongValley/win-lite-backend.git"
+  },
+  "bugs": {
+    "url": "https://github.com/KongValley/win-lite-backend/issues"
+  },
+  "homepage": "https://github.com/KongValley/win-lite-backend#readme",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "doctor": "node scripts/doctor.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18.2.0"
+  },
+  "keywords": [
+    "windows",
+    "rest",
+    "api",
+    "lightweight",
+    "x86",
+    "x64"
+  ],
+  "license": "MIT"
+}
