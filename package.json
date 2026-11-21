@@ -21,7 +21,14 @@
     "doctor": "npm run build && node dist/doctor.js",
     "clean:test": "node -e \"require('node:fs').rmSync('.test-dist', { recursive: true, force: true })\"",
     "test": "npm run clean:test && npm run build:test && node --test .test-dist/test/all.test.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pm2:start": "pm2 start ecosystem.config.json",
+    "pm2:stop": "pm2 stop win-lite-backend",
+    "pm2:restart": "pm2 restart win-lite-backend --update-env",
+    "pm2:delete": "pm2 delete win-lite-backend",
+    "pm2:status": "pm2 status",
+    "pm2:logs": "pm2 logs win-lite-backend",
+    "pm2:save": "pm2 save"
   },
   "engines": {
     "node": ">=18.2.0"

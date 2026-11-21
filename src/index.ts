@@ -71,6 +71,16 @@ async function main(): Promise<void> {
     logger.error('process.unhandled_rejection', { err: reason });
     void shutdown('unhandledRejection', 1);
   });
+
+  // Tell PM2 (or another IPC parent) that the server is listening. The PM2
+  // ecosystem config uses wait_ready so restarts wait for this signal.
+  if (typeof process.send === 'function') {
+    try {
+      process.send('ready');
+    } catch (error) {
+      logger.warn('process.ready_signal_failed', { err: error });
+    }
+  }
 }
 
 main().catch((error: unknown) => {

@@ -29,6 +29,7 @@ x86 运行时在 64 位 Windows 的 WoW64 层完成了完整测试；编译产�
 - JSON 文件持久化：串行写入、临时文件 + `fsync` + 原子改名
 - 优雅关机：停止接收新连接、等待在途写入、超时强制关闭
 - Windows 启动脚本、TypeScript 环境自检脚本、`.env` 配置
+- 可选的 PM2 进程管理配置（单实例 fork，适配文件存储）
 - 使用 `node:test` + 编译后测试的自动化测试，不引入测试框架
 
 ## 兼容性说明
@@ -405,6 +406,64 @@ Invoke-RestMethod "$base/api/tasks" -Headers $headers
 
 内置限流是单进程内存实现。如果部署多个实例，应在网关层做全局限流。
 
+## 使用 PM2（可选）
+
+项目提供 [PM2 Ecosystem File](https://doc.pm2.io/en/runtime/guide/ecosystem-file/) `ecosystem.config.json`。PM2 不加入 `dependencies`，需要单独安装；PM2 7 要求 Node.js >= 18。
+
+先构建，再启动：
+
+```bat
+npm install
+npm run build
+npm install -g pm2
+
+npm run pm2:start
+```
+
+32 位环境应使用 **同一个 x86 Node** 安装和调用 PM2，避免 PM2 启动 64 位运行时：
+
+```bat
+cd /d F:\workspace\node-backend
+C:\node-v22.21.1-win-x86\npm.cmd install -g pm2
+
+rem 如果已有其他 Node 架构启动的 PM2 守护进程，先停止它
+pm2 kill
+
+C:\node-v22.21.1-win-x86\pm2.cmd start ecosystem.config.json
+```
+
+Windows 上 PM2 使用固定的本机守护进程。切换 32/64 位运行时前要先 `pm2 kill`，启动后再用 `/api/health` 确认 `runtime.arch` 是 `ia32`。
+
+常用命令：
+
+| 命令 | 作用 |
+| --- | --- |
+| `npm run pm2:start` | 按 `ecosystem.config.json` 启动 |
+| `npm run pm2:status` | 查看状态 |
+| `npm run pm2:logs` | 查看实时日志 |
+| `npm run pm2:restart` | 重新构建后重启，刷新环境变量 |
+| `npm run pm2:stop` | 停止进程 |
+| `npm run pm2:delete` | 从 PM2 进程列表移除 |
+| `npm run pm2:save` | 保存进程列表，供 `pm2 resurrect` 使用 |
+
+配置要点：
+
+- **只运行 1 个实例**：数据层是单进程 JSON 文件存储，不要改成 PM2 cluster 或多实例。
+- 使用 `fork` 模式、进程异常自动重启，并在连续快速失败后停止重试（`max_restarts`）。
+- 应用在监听成功后发送 PM2 `ready` 信号，配置使用 `wait_ready`。
+- `max_memory_restart` 默认 `256M`；数据量较大时可在 `ecosystem.config.json` 中调整。
+- `kill_timeout` 为 12 秒，与应用默认 10 秒优雅关机等待匹配；如果调大 `SHUTDOWN_TIMEOUT_MS`，也要同步调整。
+- `NODE_ENV=production` 由 PM2 配置注入；端口、数据文件、API Key 等仍由 `.env` 或系统环境变量控制。
+
+修改代码后重新部署：
+
+```bat
+npm run build
+npm run pm2:restart
+```
+
+PM2 日志位置可用 `pm2 info win-lite-backend` 查看。PM2 本身不提供 Windows 开机服务；如果需要真正的 Windows 服务，可使用下面的 NSSM 方式，或让任务计划程序在开机时以同一账户执行 `pm2 resurrect`。
+
 ## 注册为 Windows 服务
 
 先执行 `npm run build` 生成 `dist\`，然后可以使用 [NSSM](https://nssm.cc/) 将编译后的 Node.js 进程注册为服务。32 位系统请使用 x86 `node.exe`：
@@ -446,6 +505,7 @@ nssm start win-lite-backend
 ├─ test/                    # TypeScript 测试源码
 ├─ test-support/            # TypeScript 测试辅助代码
 ├─ data/                    # 默认数据目录
+├─ ecosystem.config.json    # PM2 单实例配置
 ├─ tsconfig.json            # 生产构建配置
 ├─ tsconfig.test.json       # 测试编译配置
 ├─ .env.example
