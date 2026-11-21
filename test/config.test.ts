@@ -1,12 +1,10 @@
-'use strict';
-
-const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const os = require('node:os');
-const path = require('node:path');
-const { test } = require('node:test');
-const { ConfigError, loadConfig } = require('../src/config');
-const { loadEnvFile } = require('../src/lib/env-file');
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { test } from 'node:test';
+import { ConfigError, loadConfig } from '../src/config';
+import { loadEnvFile } from '../src/lib/env-file';
 
 test('loads defaults and resolves the data file', () => {
   const root = path.join(os.tmpdir(), 'win-lite-config-defaults');
@@ -29,7 +27,7 @@ test('reports invalid configuration values', () => {
         env: { PORT: 'abc', LOG_LEVEL: 'verbose', API_KEY: 'short' },
         projectRoot: root,
       }),
-    (error) => {
+    (error: unknown) => {
       assert.ok(error instanceof ConfigError);
       assert.equal(error.messages.length, 3);
       assert.ok(error.messages.some((message) => message.startsWith('PORT')));
@@ -79,7 +77,7 @@ test('parses a .env file without overriding existing variables', async (t) => {
     ].join('\r\n'),
   );
 
-  const env = { EXISTING: 'from-environment' };
+  const env: NodeJS.ProcessEnv = { EXISTING: 'from-environment' };
   const loaded = loadEnvFile(filePath, { env });
 
   assert.equal(env.PORT, '3333');

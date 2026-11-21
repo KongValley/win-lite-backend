@@ -1,19 +1,18 @@
-'use strict';
+import path from 'node:path';
+import { PROJECT_ROOT, loadConfig } from './config';
+import { loadEnvFile } from './lib/env-file';
+import { getErrorCode, getErrorMessage, getErrorStack } from './lib/errors';
+import { createLogger } from './lib/logger';
+import { assertSupportedNodeVersion } from './lib/runtime';
+import { startServer } from './server';
 
-const path = require('node:path');
-const { loadConfig, PROJECT_ROOT } = require('./config');
-const { loadEnvFile } = require('./lib/env-file');
-const { createLogger } = require('./lib/logger');
-const { assertSupportedNodeVersion } = require('./lib/runtime');
-const { startServer } = require('./server');
-
-async function main() {
+async function main(): Promise<void> {
   assertSupportedNodeVersion();
 
   try {
     loadEnvFile(path.join(PROJECT_ROOT, '.env'));
   } catch (error) {
-    console.error(`[config] Unable to load .env: ${error.message}`);
+    console.error(`[config] Unable to load .env: ${getErrorMessage(error)}`);
     process.exitCode = 1;
     return;
   }
@@ -22,7 +21,7 @@ async function main() {
   try {
     config = loadConfig();
   } catch (error) {
-    console.error(`[config] ${error.message}`);
+    console.error(`[config] ${getErrorMessage(error)}`);
     process.exitCode = 1;
     return;
   }
@@ -32,7 +31,7 @@ async function main() {
 
   let shuttingDown = false;
 
-  async function shutdown(reason, exitCode) {
+  async function shutdown(reason: string, exitCode: number): Promise<void> {
     if (shuttingDown) {
       logger.warn('server.shutdown_already_in_progress', { reason });
       return;
@@ -52,7 +51,7 @@ async function main() {
     process.exitCode = exitCode;
   }
 
-  const signals = ['SIGINT', 'SIGTERM'];
+  const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
   if (process.platform === 'win32') {
     signals.push('SIGBREAK');
   }
@@ -74,17 +73,17 @@ async function main() {
   });
 }
 
-main().catch((error) => {
-  console.error(`[startup] ${error.message}`);
+main().catch((error: unknown) => {
+  console.error(`[startup] ${getErrorMessage(error)}`);
 
-  if (error.code === 'EADDRINUSE') {
+  if (getErrorCode(error) === 'EADDRINUSE') {
     console.error(
       '[startup] The port is already in use. Change PORT in .env or stop the other process.',
     );
   }
 
   if (process.env.DEBUG) {
-    console.error(error.stack);
+    console.error(getErrorStack(error));
   }
 
   process.exitCode = 1;

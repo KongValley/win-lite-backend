@@ -1,20 +1,23 @@
 # win-lite-backend
 
-一个**零运行时依赖**的轻量级 Node.js REST 后端。同一份代码无需重新编译，即可运行在 32 位（x86 / `ia32`）和 64 位（x64）Windows 上。
+一个使用 **TypeScript** 编写的**零运行时依赖**轻量级 Node.js REST 后端。TypeScript 编译成 CommonJS JavaScript 后，同一份编译产物无需按处理器位数重新编译，即可运行在 32 位（x86 / `ia32`）和 64 位（x64）Windows 上。
 
-它只使用 Node.js 内置模块，没有原生模块、没有 `node-gyp`、没有第三方运行时依赖，适合作为小型 API、内网工具、Windows 本地服务或后端骨架。
+运行时只使用 Node.js 内置模块，没有原生模块、没有 `node-gyp`、没有第三方 `dependencies`。TypeScript、`tsx` 和 Node 类型声明仅用于开发与构建，适合作为小型 API、内网工具、Windows 本地服务或后端骨架。
 
 ## 已验证环境
+
+以下结果使用 TypeScript 编译后的 JavaScript 测试：
 
 | 环境 | Node.js | 测试结果 |
 | --- | --- | --- |
 | 64 位 Windows 10 (x64) | v24.19.0 / x64 | 25 / 25 通过 |
 | 64 位 Windows 10 + WoW64 | v22.21.1 / ia32 | 25 / 25 通过 |
 
-x86 运行时在 64 位 Windows 的 WoW64 层完成了完整测试；代码不含原生模块、指针宽度假设或 64 位专属 API，32 位 Windows 使用同一套官方 `win-x86` 运行时。
+x86 运行时在 64 位 Windows 的 WoW64 层完成了完整测试；编译产物不含原生模块、指针宽度假设或 64 位专属 API，32 位 Windows 使用同一套官方 `win-x86` 运行时。
 
 ## 功能
 
+- 严格模式 TypeScript 源码，编译为 CommonJS，兼容 32/64 位 Windows
 - 任务 CRUD：创建、查询、筛选、分页、更新、删除
 - 健康检查与运行时/系统信息（可清楚看到 `x64` 或 `ia32`）
 - 原生 HTTP 路由：路径参数、静态路由优先、HEAD、404/405
@@ -25,8 +28,8 @@ x86 运行时在 64 位 Windows 的 WoW64 层完成了完整测试；代码不�
 - 每 IP 固定窗口限流（内存实现，可按需关闭）
 - JSON 文件持久化：串行写入、临时文件 + `fsync` + 原子改名
 - 优雅关机：停止接收新连接、等待在途写入、超时强制关闭
-- Windows 启动脚本、环境自检脚本配置（`.env`）
-- 基于 `node:test` 的自动化测试，不引入测试框架依赖
+- Windows 启动脚本、TypeScript 环境自检脚本、`.env` 配置
+- 使用 `node:test` + 编译后测试的自动化测试，不引入测试框架
 
 ## 兼容性说明
 
@@ -50,30 +53,38 @@ x86 运行时在 64 位 Windows 的 WoW64 层完成了完整测试；代码不�
 
 ## 快速开始
 
-进入项目目录（无需 `npm install`）：
+需要 Node.js >= 18.2 和 npm。首次使用先安装开发依赖并把 TypeScript 编译到 `dist\`：
 
 ```bat
 cd /d F:\workspace\node-backend
+npm install
+npm run build
 npm start
 ```
 
-也可以直接运行 Windows 启动脚本：
+也可以运行 Windows 启动脚本：
 
 ```bat
 scripts\start.cmd
 ```
 
-如果项目根目录存在 `node.exe`，`start.cmd` 会优先使用它。因此可以把官方 Node.js 运行时解压出的 `node.exe` 放到项目根目录，做成**无需安装 Node.js 的便携目录**：
+`start.cmd` 会使用编译后的 `dist\index.js`；如果还没有编译，会提示先执行构建。
+
+### 便携目录
+
+编译完成后，目标机器只需要 Node.js 运行时，不需要安装 TypeScript 或任何 `node_modules`。如果项目根目录存在 `node.exe`，`start.cmd` 会优先使用它，因此可以制作免安装 Node.js 的便携目录：
 
 ```text
 win-lite-backend\
 ├─ node.exe          <- 对应架构的官方运行时
-├─ src\
-├─ scripts\
-└─ ...
+├─ package.json
+├─ dist\             <- 已执行的 npm run build 产物
+├─ scripts\start.cmd
+├─ data\             <- 首次启动自动创建
+└─ .env              <- 可选
 ```
 
-将整个目录复制到 32 位或 64 位 Windows 后，双击 `scripts\start.cmd` 即可运行。
+将整个目录复制到 32 位或 64 位 Windows 后，双击 `scripts\start.cmd` 即可运行。TypeScript 源码和开发依赖不需要随运行时目录分发。
 
 默认监听 `0.0.0.0:3000`。启动后访问：
 
@@ -93,7 +104,7 @@ notepad .env
 npm start
 ```
 
-运行环境自检：
+运行环境自检（会先重新构建）：
 
 ```bat
 npm run doctor
@@ -110,7 +121,24 @@ npm run doctor
 
    输出应为 `ia32`。
 
-3. 将 x86 运行时加入当前命令窗口的 `PATH`，然后启动：
+3. 准备编译产物。TypeScript 只需要在构建时运行，编译出的 CommonJS JavaScript 与处理器位数无关：
+
+   ```bat
+   cd /d F:\workspace\node-backend
+   npm install
+   npm run build
+   ```
+
+   也可以在 32 位机器上用 x86 版 npm 构建：
+
+   ```bat
+   C:\node-v22.21.1-win-x86\npm.cmd install
+   C:\node-v22.21.1-win-x86\npm.cmd run build
+   ```
+
+   如果已经有构建好的 `dist\`，目标机器不需要安装 TypeScript 或 `node_modules`。
+
+4. 将 x86 运行时加入当前命令窗口的 `PATH`，然后启动：
 
    ```bat
    cd /d F:\workspace\node-backend
@@ -121,10 +149,10 @@ npm run doctor
    或者直接用绝对路径启动：
 
    ```bat
-   C:\node-v22.21.1-win-x86\node.exe src\index.js
+   C:\node-v22.21.1-win-x86\node.exe dist\index.js
    ```
 
-4. 验证架构：
+5. 验证架构：
 
    ```powershell
    (Invoke-RestMethod http://127.0.0.1:3000/api/health).runtime
@@ -379,13 +407,14 @@ Invoke-RestMethod "$base/api/tasks" -Headers $headers
 
 ## 注册为 Windows 服务
 
-可以使用 [NSSM](https://nssm.cc/) 将 Node.js 进程注册为服务，32 位系统请使用 x86 `node.exe`：
+先执行 `npm run build` 生成 `dist\`，然后可以使用 [NSSM](https://nssm.cc/) 将编译后的 Node.js 进程注册为服务。32 位系统请使用 x86 `node.exe`：
 
 ```bat
 cd /d F:\workspace\node-backend
+npm run build
 mkdir logs
 
-nssm install win-lite-backend "C:\node-v22.21.1-win-x86\node.exe" "F:\workspace\node-backend\src\index.js"
+nssm install win-lite-backend "C:\node-v22.21.1-win-x86\node.exe" "F:\workspace\node-backend\dist\index.js"
 nssm set win-lite-backend AppDirectory "F:\workspace\node-backend"
 nssm set win-lite-backend AppStdout "F:\workspace\node-backend\logs\stdout.log"
 nssm set win-lite-backend AppStderr "F:\workspace\node-backend\logs\stderr.log"
@@ -393,52 +422,67 @@ nssm set win-lite-backend Start SERVICE_AUTO_START
 nssm start win-lite-backend
 ```
 
-服务账户需要对数据目录有读写权限。若需要局域网访问，还要在 Windows 防火墙中放行对应 TCP 端口。
+服务账户需要对 `dist\` 有读取权限、对数据目录有读写权限。若需要局域网访问，还要在 Windows 防火墙中放行对应 TCP 端口。
 
 ## 项目结构
 
 ```text
 .
 ├─ src/
-│  ├─ index.js              # 进程入口、.env、信号处理
-│  ├─ config.js             # 环境配置校验
-│  ├─ app.js                # 中间件管线、错误处理、请求日志
-│  ├─ server.js             # HTTP 服务、监听、优雅关机
+│  ├─ index.ts              # 进程入口、.env、信号处理
+│  ├─ config.ts             # 环境配置校验
+│  ├─ app.ts                # 中间件管线、错误处理、请求日志
+│  ├─ server.ts             # HTTP 服务、监听、优雅关机
+│  ├─ domain.ts             # Task/Input 等共享类型
+│  ├─ context.ts            # 请求上下文与路由处理器类型
+│  ├─ doctor.ts             # 环境与 32/64 位检查
 │  ├─ http/                 # 路由、JSON 请求体、响应工具
 │  ├─ middleware/           # CORS、API Key、限流
 │  ├─ routes/               # 健康检查、系统信息、任务 API
-│  ├─ store/task-store.js   # 原子 JSON 持久化
+│  ├─ store/task-store.ts   # 原子 JSON 持久化
 │  └─ lib/                  # 日志、错误、校验、运行时检查等
-├─ scripts/
-│  ├─ start.cmd             # Windows 一键启动
-│  └─ doctor.js             # 环境与 32/64 位检查
-├─ test/                    # node:test 测试
-├─ test-support/            # 测试辅助代码
+├─ dist/                    # npm run build 生成的 CommonJS（git 忽略）
+├─ scripts/start.cmd        # Windows 一键启动
+├─ test/                    # TypeScript 测试源码
+├─ test-support/            # TypeScript 测试辅助代码
 ├─ data/                    # 默认数据目录
+├─ tsconfig.json            # 生产构建配置
+├─ tsconfig.test.json       # 测试编译配置
 ├─ .env.example
-└─ package.json             # 无 dependencies
+├─ package.json             # dependencies 为 0，构建工具在 devDependencies
+└─ package-lock.json
 ```
 
 ## 开发与测试
 
 ```bat
+npm install
+
+npm run typecheck   # 只做 TypeScript 类型检查
+npm test            # 清理并编译测试，自动发现 .test-dist/test/**/*.test.js
+npm run build       # 编译到 dist
+npm start           # 运行 dist/index.js
+npm run dev         # tsx watch src/index.ts，改动后自动重启
+npm run doctor      # 构建后执行环境检查
+```
+
+`dist/` 和 `.test-dist/` 都是生成目录，不提交到 Git。运行时只需要 `dist/`、`package.json`、`scripts/` 和对应架构的 Node.js，不需要 TypeScript 或 `node_modules`。
+
+在 32 位运行时上运行完整测试，建议显式使用 x86 `node.exe`，确保编译器和测试进程都是 32 位：
+
+```bat
+C:\node-v22.21.1-win-x86\node.exe .\node_modules\typescript\bin\tsc -p tsconfig.test.json
+C:\node-v22.21.1-win-x86\node.exe --test .test-dist\test\all.test.js
+```
+
+也可以先把 x86 运行时放到 `PATH` 最前面，再执行 `npm test`：
+
+```bat
+set "PATH=C:\node-v22.21.1-win-x86;%PATH%"
 npm test
-npm run doctor
 ```
 
-在 32 位运行时上运行完整测试：
-
-```bat
-C:\node-v22.21.1-win-x86\node.exe --test
-```
-
-测试会使用系统临时目录，不污染 `data/tasks.json`。开发模式可使用：
-
-```bat
-npm run dev
-```
-
-`npm run dev` 需要 Node.js 18.11+ 的 `--watch` 支持。
+测试会使用系统临时目录，不污染 `data/tasks.json`。
 
 ## 常见问题
 
@@ -449,6 +493,22 @@ Node.js 未安装或未加入 `PATH`。32 位系统请安装 x86 ZIP 运行时�
 ### Node.js 24 没有 Windows 32 位版本
 
 这是 Node.js 上游的发布策略，不是本项目的问题。32 位 Windows 请使用 Node.js 22 LTS x86；当前项目的代码兼容 Node.js 18.2+。
+
+### 启动时提示找不到 `dist\index.js` 或 `MODULE_NOT_FOUND`
+
+项目现在使用 TypeScript，运行前需要先编译：
+
+```bat
+npm install
+npm run build
+npm start
+```
+
+目标机器只运行编译产物时不需要 TypeScript。如果使用便携目录，请在复制前完成构建并带上 `dist\`、`package.json`。
+
+### 目标机器需要安装 TypeScript 吗
+
+不需要。TypeScript 只用于开发和构建；编译后的 `dist\` 是普通 CommonJS JavaScript，运行时依赖仍为 0 个。
 
 ### 端口被占用（`EADDRINUSE`）
 

@@ -1,19 +1,27 @@
-'use strict';
-
-const { sendNoContent } = require('../http/respond');
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { sendNoContent } from '../http/respond';
 
 const ALLOWED_METHODS = 'GET, HEAD, POST, PATCH, DELETE, OPTIONS';
 const ALLOWED_HEADERS = 'Content-Type, Authorization, X-API-Key';
 
-function createCors(origins, maxAgeSeconds) {
+export interface Cors {
+  readonly enabled: boolean;
+  apply(req: IncomingMessage, res: ServerResponse): void;
+  handlePreflight(req: IncomingMessage, res: ServerResponse): boolean;
+}
+
+export function createCors(
+  origins: readonly string[],
+  maxAgeSeconds: number,
+): Cors {
   const enabled = origins.length > 0;
   const wildcard = origins.includes('*');
 
-  function isAllowed(origin) {
+  function isAllowed(origin: string): boolean {
     return wildcard || origins.includes(origin);
   }
 
-  function apply(req, res) {
+  function apply(req: IncomingMessage, res: ServerResponse): void {
     if (!enabled) {
       return;
     }
@@ -29,7 +37,7 @@ function createCors(origins, maxAgeSeconds) {
     }
   }
 
-  function handlePreflight(req, res) {
+  function handlePreflight(req: IncomingMessage, res: ServerResponse): boolean {
     if (!enabled) {
       return false;
     }
@@ -51,5 +59,3 @@ function createCors(origins, maxAgeSeconds) {
     handlePreflight,
   };
 }
-
-module.exports = { createCors };

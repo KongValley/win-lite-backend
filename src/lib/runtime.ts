@@ -1,13 +1,20 @@
-'use strict';
+export const MIN_NODE_VERSION = Object.freeze([18, 2, 0] as const);
+export const MIN_NODE_VERSION_STRING = MIN_NODE_VERSION.join('.');
 
-const MIN_NODE_VERSION = Object.freeze([18, 2, 0]);
-const MIN_NODE_VERSION_STRING = MIN_NODE_VERSION.join('.');
+export interface NodeSupport {
+  readonly version: string;
+  readonly minimum: string;
+  readonly supported: boolean;
+}
 
-function compareVersions(left, right) {
+export function compareVersions(
+  left: readonly number[],
+  right: readonly number[],
+): number {
   const length = Math.max(left.length, right.length);
   for (let index = 0; index < length; index += 1) {
-    const a = left[index] || 0;
-    const b = right[index] || 0;
+    const a = left[index] ?? 0;
+    const b = right[index] ?? 0;
     if (a > b) {
       return 1;
     }
@@ -18,7 +25,7 @@ function compareVersions(left, right) {
   return 0;
 }
 
-function getNodeSupport(version = process.versions.node) {
+export function getNodeSupport(version = process.versions.node): NodeSupport {
   const parsed = String(version)
     .split('.')
     .map((part) => Number.parseInt(part, 10) || 0);
@@ -30,7 +37,7 @@ function getNodeSupport(version = process.versions.node) {
   };
 }
 
-function assertSupportedNodeVersion() {
+export function assertSupportedNodeVersion(): void {
   const support = getNodeSupport();
   if (!support.supported) {
     throw new Error(
@@ -38,11 +45,3 @@ function assertSupportedNodeVersion() {
     );
   }
 }
-
-module.exports = {
-  MIN_NODE_VERSION,
-  MIN_NODE_VERSION_STRING,
-  assertSupportedNodeVersion,
-  compareVersions,
-  getNodeSupport,
-};

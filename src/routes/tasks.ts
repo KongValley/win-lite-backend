@@ -1,20 +1,28 @@
-'use strict';
-
-const { sendJson, sendNoContent } = require('../http/respond');
-const { HttpError } = require('../lib/http-error');
-const {
+import type { RequestContext } from '../context';
+import { sendJson, sendNoContent } from '../http/respond';
+import { HttpError } from '../lib/http-error';
+import {
   normalizeCreateInput,
   normalizeUpdateInput,
   parseListQuery,
-} = require('../lib/task-input');
+} from '../lib/task-input';
+import type { TaskStore } from '../store/task-store';
 
-function taskNotFound() {
+function taskNotFound(): HttpError {
   return new HttpError(404, 'TASK_NOT_FOUND', 'Task not found');
 }
 
-function createTaskHandlers(store) {
+export interface TaskHandlers {
+  list(ctx: RequestContext): void;
+  create(ctx: RequestContext): Promise<void>;
+  get(ctx: RequestContext): void;
+  update(ctx: RequestContext): Promise<void>;
+  remove(ctx: RequestContext): Promise<void>;
+}
+
+export function createTaskHandlers(store: TaskStore): TaskHandlers {
   return {
-    list(ctx) {
+    list(ctx: RequestContext): void {
       const query = parseListQuery(ctx.url.searchParams);
       const result = store.list(query);
 
@@ -34,7 +42,7 @@ function createTaskHandlers(store) {
       });
     },
 
-    async create(ctx) {
+    async create(ctx: RequestContext): Promise<void> {
       const input = normalizeCreateInput(ctx.body);
       const task = await store.create(input);
 
@@ -47,8 +55,8 @@ function createTaskHandlers(store) {
       );
     },
 
-    get(ctx) {
-      const task = store.get(ctx.params.id);
+    get(ctx: RequestContext): void {
+      const task = store.get(ctx.params.id ?? '');
       if (!task) {
         throw taskNotFound();
       }
@@ -56,9 +64,9 @@ function createTaskHandlers(store) {
       sendJson(ctx.req, ctx.res, 200, { data: task });
     },
 
-    async update(ctx) {
+    async update(ctx: RequestContext): Promise<void> {
       const patch = normalizeUpdateInput(ctx.body);
-      const task = await store.update(ctx.params.id, patch);
+      const task = await store.update(ctx.params.id ?? '', patch);
       if (!task) {
         throw taskNotFound();
       }
@@ -66,8 +74,8 @@ function createTaskHandlers(store) {
       sendJson(ctx.req, ctx.res, 200, { data: task });
     },
 
-    async remove(ctx) {
-      const deleted = await store.delete(ctx.params.id);
+    async remove(ctx: RequestContext): Promise<void> {
+      const deleted = await store.delete(ctx.params.id ?? '');
       if (!deleted) {
         throw taskNotFound();
       }
@@ -76,5 +84,3 @@ function createTaskHandlers(store) {
     },
   };
 }
-
-module.exports = { createTaskHandlers };

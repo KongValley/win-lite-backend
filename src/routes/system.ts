@@ -1,10 +1,12 @@
-'use strict';
+import os from 'node:os';
+import type { AppConfig } from '../config';
+import type { RequestContext } from '../context';
+import { sendJson } from '../http/respond';
 
-const os = require('node:os');
-const { sendJson } = require('../http/respond');
-
-function createSystemHandler(config) {
-  return function systemInfo(ctx) {
+export function createSystemHandler(
+  config: AppConfig,
+): (ctx: RequestContext) => void {
+  return function systemInfo(ctx): void {
     const memory = process.memoryUsage();
 
     sendJson(ctx.req, ctx.res, 200, {
@@ -49,5 +51,3 @@ function createSystemHandler(config) {
     });
   };
 }
-
-module.exports = { createSystemHandler };

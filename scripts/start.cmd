@@ -13,12 +13,18 @@ if errorlevel 1 (
   exit /b 1
 )
 
+if not exist "dist\index.js" (
+  echo [ERROR] Compiled server not found: dist\index.js
+  echo         Run "npm install" and "npm run build" first.
+  exit /b 1
+)
+
 for /f "delims=" %%V in ('node --version 2^>nul') do set "NODE_VERSION=%%V"
 echo [win-lite-backend] Node.js %NODE_VERSION%
 echo [win-lite-backend] Starting server (Ctrl+C to stop)...
 echo.
 
-node "src\index.js"
+node "dist\index.js"
 set "EXIT_CODE=%ERRORLEVEL%"
 
 if not "%EXIT_CODE%"=="0" (

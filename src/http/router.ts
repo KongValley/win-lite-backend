@@ -1,6 +1,5 @@
-'use strict';
-
-const { HttpError } = require('../lib/http-error');
+import { HttpError } from '../lib/http-error';
+import type { RouteHandler, RouteOptions } from '../context';
 
 const HTTP_METHODS = new Set([
   'GET',
@@ -12,9 +11,37 @@ const HTTP_METHODS = new Set([
   'OPTIONS',
 ]);
 
-const METHOD_ORDER = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
+export const METHOD_ORDER = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
 
-function compilePath(pathname) {
+interface StaticSegment {
+  readonly type: 'static';
+  readonly value: string;
+}
+
+interface ParamSegment {
+  readonly type: 'param';
+  readonly name: string;
+}
+
+type RouteSegment = StaticSegment | ParamSegment;
+
+export interface Route {
+  readonly method: string;
+  readonly path: string;
+  readonly segments: RouteSegment[];
+  readonly staticSegments: number;
+  readonly handler: RouteHandler;
+  readonly options: RouteOptions;
+}
+
+export interface RouteMatch {
+  readonly route: Route | null;
+  readonly params: Record<string, string> | null;
+  readonly allowed: string[];
+  readonly pathMatched: boolean;
+}
+
+function compilePath(pathname: string): RouteSegment[] {
   if (typeof pathname !== 'string' || !pathname.startsWith('/')) {
     throw new TypeError('Route path must start with "/"');
   }
@@ -26,7 +53,7 @@ function compilePath(pathname) {
   return pathname
     .slice(1)
     .split('/')
-    .map((part) => {
+    .map((part): RouteSegment => {
       if (part.startsWith(':')) {
         const name = part.slice(1);
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
@@ -38,25 +65,27 @@ function compilePath(pathname) {
     });
 }
 
-function splitPath(pathname) {
+function splitPath(pathname: string): string[] {
   if (pathname === '/') {
     return [];
   }
   return pathname.slice(1).split('/');
 }
 
-function matchSegments(routeSegments, pathSegments) {
+function matchSegments(
+  routeSegments: readonly RouteSegment[],
+  pathSegments: readonly string[],
+): Record<string, string> | null {
   if (routeSegments.length !== pathSegments.length) {
     return null;
   }
 
-  const params = Object.create(null);
+  const params = Object.create(null) as Record<string, string>;
 
   for (let index = 0; index < routeSegments.length; index += 1) {
     const routePart = routeSegments[index];
     const pathPart = pathSegments[index];
-
-    if (!pathPart) {
+    if (!routePart || !pathPart) {
       return null;
     }
 
@@ -81,12 +110,15 @@ function matchSegments(routeSegments, pathSegments) {
  * Tiny path router. Static routes automatically win over parameterised routes,
  * regardless of registration order.
  */
-class Router {
-  constructor() {
-    this.routes = [];
-  }
+export class Router {
+  private readonly routes: Route[] = [];
 
-  add(method, pathname, handler, options = {}) {
+  add(
+    method: string,
+    pathname: string,
+    handler: RouteHandler,
+    options: RouteOptions = {},
+  ): this {
     const normalizedMethod = String(method).toUpperCase();
     if (!HTTP_METHODS.has(normalizedMethod)) {
       throw new TypeError(`Unsupported HTTP method: ${method}`);
@@ -107,34 +139,38 @@ class Router {
     return this;
   }
 
-  get(pathname, handler, options) {
+  get(pathname: string, handler: RouteHandler, options?: RouteOptions): this {
     return this.add('GET', pathname, handler, options);
   }
 
-  post(pathname, handler, options) {
+  post(pathname: string, handler: RouteHandler, options?: RouteOptions): this {
     return this.add('POST', pathname, handler, options);
   }
 
-  put(pathname, handler, options) {
+  put(pathname: string, handler: RouteHandler, options?: RouteOptions): this {
     return this.add('PUT', pathname, handler, options);
   }
 
-  patch(pathname, handler, options) {
+  patch(pathname: string, handler: RouteHandler, options?: RouteOptions): this {
     return this.add('PATCH', pathname, handler, options);
   }
 
-  delete(pathname, handler, options) {
+  delete(pathname: string, handler: RouteHandler, options?: RouteOptions): this {
     return this.add('DELETE', pathname, handler, options);
   }
 
-  match(method, pathname) {
+  match(method: string, pathname: string): RouteMatch {
     const requestMethod = method === 'HEAD' ? 'GET' : method;
     const pathSegments = splitPath(pathname);
-    const allowed = new Set();
-    let best = null;
+    const allowed = new Set<string>();
+    let best: { route: Route; params: Record<string, string>; index: number } | null =
+      null;
 
     for (let index = 0; index < this.routes.length; index += 1) {
       const route = this.routes[index];
+      if (!route) {
+        continue;
+      }
       const params = matchSegments(route.segments, pathSegments);
 
       if (params === null) {
@@ -157,15 +193,15 @@ class Router {
     }
 
     return {
-      route: best ? best.route : null,
-      params: best ? best.params : null,
+      route: best?.route ?? null,
+      params: best?.params ?? null,
       allowed: METHOD_ORDER.filter((name) => allowed.has(name)),
       pathMatched: allowed.size > 0,
     };
   }
 }
 
-function normalizePathname(pathname) {
+export function normalizePathname(pathname: string): string {
   if (pathname.length > 1) {
     let end = pathname.length;
     while (end > 1 && pathname.charCodeAt(end - 1) === 0x2f) {
@@ -177,10 +213,3 @@ function normalizePathname(pathname) {
   }
   return pathname;
 }
-
-module.exports = {
-  HTTP_METHODS,
-  METHOD_ORDER,
-  Router,
-  normalizePathname,
-};

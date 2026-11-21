@@ -1,19 +1,43 @@
-'use strict';
+import http, { type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { createApp, type App } from './app';
+import type { AppConfig } from './config';
+import { getErrorCode } from './lib/errors';
+import type { Logger } from './lib/logger';
+import { TaskStore } from './store/task-store';
 
-const http = require('node:http');
-const { createApp } = require('./app');
-const { TaskStore } = require('./store/task-store');
+export interface CreateRuntimeOptions {
+  readonly config: AppConfig;
+  readonly logger: Logger;
+}
 
-function formatLocalUrl(host, port) {
+export interface Runtime {
+  readonly server: Server;
+  readonly app: App;
+  readonly store: TaskStore;
+  readonly config: AppConfig;
+  readonly logger: Logger;
+  listen(port?: number, host?: string): Promise<AddressInfo>;
+  stop(): Promise<void>;
+  getAddress(): AddressInfo | null;
+}
+
+export interface StartedRuntime extends Runtime {
+  readonly address: AddressInfo;
+}
+
+function formatLocalUrl(host: string, port: number): string {
   const localHost =
     host === '0.0.0.0' || host === '::' || host === '[::]' ? '127.0.0.1' : host;
   const bracketed = localHost.includes(':') ? `[${localHost}]` : localHost;
   return `http://${bracketed}:${port}`;
 }
 
-async function createRuntime(options) {
+export async function createRuntime(
+  options: CreateRuntimeOptions,
+): Promise<Runtime> {
   const { config, logger } = options;
-  const store = new TaskStore({ filePath: config.dataFile, logger });
+  const store = new TaskStore({ filePath: config.dataFile });
   await store.init();
 
   const app = createApp({ config, logger, store });
@@ -25,13 +49,13 @@ async function createRuntime(options) {
   server.maxHeadersCount = 2000;
 
   server.on('clientError', (error, socket) => {
-    if (error.code === 'ECONNRESET' || !socket.writable) {
+    if (getErrorCode(error) === 'ECONNRESET' || !socket.writable) {
       return;
     }
 
     logger.debug('server.client_error', { err: error });
     const statusLine =
-      error.code === 'HPE_HEADER_OVERFLOW'
+      getErrorCode(error) === 'HPE_HEADER_OVERFLOW'
         ? '431 Request Header Fields Too Large'
         : '400 Bad Request';
     socket.end(
@@ -39,23 +63,28 @@ async function createRuntime(options) {
     );
   });
 
-  let stopping = null;
-  let address = null;
+  let stopping: Promise<void> | null = null;
+  let address: AddressInfo | null = null;
 
-  function listen(port = config.port, host = config.host) {
-    return new Promise((resolve, reject) => {
-      function onError(error) {
+  function listen(port = config.port, host = config.host): Promise<AddressInfo> {
+    return new Promise<AddressInfo>((resolve, reject) => {
+      function onError(error: Error): void {
         server.off('listening', onListening);
         reject(error);
       }
 
-      function onListening() {
+      function onListening(): void {
         server.off('error', onError);
-        address = server.address();
+        const boundAddress = server.address();
+        if (!boundAddress || typeof boundAddress === 'string') {
+          reject(new Error('Server did not bind to a TCP address'));
+          return;
+        }
+        address = boundAddress;
         server.on('error', (error) => {
           logger.error('server.error', { err: error });
         });
-        resolve(address);
+        resolve(boundAddress);
       }
 
       server.once('error', onError);
@@ -64,7 +93,7 @@ async function createRuntime(options) {
     });
   }
 
-  function stop() {
+  function stop(): Promise<void> {
     if (stopping) {
       return stopping;
     }
@@ -73,10 +102,11 @@ async function createRuntime(options) {
       app.close();
 
       if (server.listening) {
-        await new Promise((resolve) => {
+        await new Promise<void>((resolve) => {
           let finished = false;
+          let timer: NodeJS.Timeout;
 
-          function finish() {
+          function finish(): void {
             if (finished) {
               return;
             }
@@ -85,7 +115,7 @@ async function createRuntime(options) {
             resolve();
           }
 
-          const timer = setTimeout(() => {
+          timer = setTimeout(() => {
             logger.warn('server.force_close', {
               timeoutMs: config.shutdownTimeoutMs,
             });
@@ -121,7 +151,9 @@ async function createRuntime(options) {
   };
 }
 
-async function startServer(options) {
+export async function startServer(
+  options: CreateRuntimeOptions,
+): Promise<StartedRuntime> {
   const { config, logger } = options;
   const runtime = await createRuntime({ config, logger });
 
@@ -150,8 +182,4 @@ async function startServer(options) {
   }
 }
 
-module.exports = {
-  createRuntime,
-  formatLocalUrl,
-  startServer,
-};
+export { formatLocalUrl };

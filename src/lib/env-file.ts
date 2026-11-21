@@ -1,6 +1,9 @@
-'use strict';
+import fs from 'node:fs';
+import { getErrorCode } from './errors';
 
-const fs = require('node:fs');
+export interface LoadEnvFileOptions {
+  readonly env?: NodeJS.ProcessEnv;
+}
 
 /**
  * Load a small, dependency-free .env file.
@@ -8,16 +11,19 @@ const fs = require('node:fs');
  * Existing process environment variables always win, matching the behaviour of
  * common Node.js dotenv implementations. Values are not interpolated.
  *
- * @returns {string[]} names of variables that were added
+ * @returns names of variables that were added
  */
-function loadEnvFile(filePath, options = {}) {
-  const env = options.env || process.env;
-  let source;
+export function loadEnvFile(
+  filePath: string,
+  options: LoadEnvFileOptions = {},
+): string[] {
+  const env = options.env ?? process.env;
+  let source: string;
 
   try {
     source = fs.readFileSync(filePath, 'utf8');
   } catch (error) {
-    if (error.code === 'ENOENT') {
+    if (getErrorCode(error) === 'ENOENT') {
       return [];
     }
     throw error;
@@ -27,7 +33,7 @@ function loadEnvFile(filePath, options = {}) {
     source = source.slice(1);
   }
 
-  const loaded = [];
+  const loaded: string[] = [];
 
   source.split(/\r?\n/).forEach((rawLine, index) => {
     let line = rawLine.trim();
@@ -62,7 +68,7 @@ function loadEnvFile(filePath, options = {}) {
 
       // Quote characters are removed, but the content is kept literally. This
       // keeps Windows paths such as C:\temp\tasks.json intact.
-      value = quoted[1];
+      value = quoted[1] ?? '';
     } else {
       // Allow inline comments such as: PORT=3000 # local port
       const comment = value.search(/\s#/);
@@ -79,5 +85,3 @@ function loadEnvFile(filePath, options = {}) {
 
   return loaded;
 }
-
-module.exports = { loadEnvFile };

@@ -1,20 +1,54 @@
-'use strict';
+import path from 'node:path';
+import { LOG_LEVELS, isLogLevel, type LogLevel } from './lib/logger';
+import { PACKAGE_METADATA, PROJECT_ROOT } from './lib/project';
 
-const path = require('node:path');
-const pkg = require('../package.json');
+export { LOG_LEVELS, PROJECT_ROOT };
 
-const PROJECT_ROOT = path.resolve(__dirname, '..');
-const LOG_LEVELS = new Set(['debug', 'info', 'warn', 'error', 'silent']);
+export interface AppConfig {
+  readonly serviceName: string;
+  readonly version: string;
+  readonly environment: string;
+  readonly host: string;
+  readonly port: number;
+  readonly dataFile: string;
+  readonly projectRoot: string;
+  readonly corsOrigins: readonly string[];
+  readonly corsMaxAgeSeconds: number;
+  readonly apiKey: string;
+  readonly bodyLimitBytes: number;
+  readonly maxUrlLength: number;
+  readonly rateLimitWindowMs: number;
+  readonly rateLimitMax: number;
+  readonly trustProxy: boolean;
+  readonly logLevel: LogLevel;
+  readonly requestTimeoutMs: number;
+  readonly headersTimeoutMs: number;
+  readonly shutdownTimeoutMs: number;
+}
 
-class ConfigError extends Error {
-  constructor(messages) {
+export interface LoadConfigOptions {
+  readonly env?: NodeJS.ProcessEnv;
+  readonly projectRoot?: string;
+}
+
+export class ConfigError extends Error {
+  readonly messages: readonly string[];
+
+  constructor(messages: readonly string[]) {
     super(`Invalid configuration:\n- ${messages.join('\n- ')}`);
     this.name = 'ConfigError';
     this.messages = messages;
   }
 }
 
-function readInteger(errors, env, name, fallback, min, max) {
+function readInteger(
+  errors: string[],
+  env: NodeJS.ProcessEnv,
+  name: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
   const raw = env[name];
   if (raw === undefined || raw === '') {
     return fallback;
@@ -34,7 +68,12 @@ function readInteger(errors, env, name, fallback, min, max) {
   return value;
 }
 
-function readBoolean(errors, env, name, fallback) {
+function readBoolean(
+  errors: string[],
+  env: NodeJS.ProcessEnv,
+  name: string,
+  fallback: boolean,
+): boolean {
   const raw = env[name];
   if (raw === undefined || raw === '') {
     return fallback;
@@ -52,7 +91,7 @@ function readBoolean(errors, env, name, fallback) {
   return fallback;
 }
 
-function readCorsOrigins(errors, env) {
+function readCorsOrigins(errors: string[], env: NodeJS.ProcessEnv): string[] {
   const raw = env.CORS_ORIGIN;
   if (raw === undefined) {
     return ['*'];
@@ -63,7 +102,7 @@ function readCorsOrigins(errors, env) {
     return [];
   }
 
-  const origins = [];
+  const origins: string[] = [];
   for (const item of value.split(',')) {
     const origin = item.trim();
     if (!origin) {
@@ -91,10 +130,10 @@ function readCorsOrigins(errors, env) {
   return [...new Set(origins)];
 }
 
-function loadConfig(options = {}) {
-  const env = options.env || process.env;
-  const projectRoot = path.resolve(options.projectRoot || PROJECT_ROOT);
-  const errors = [];
+export function loadConfig(options: LoadConfigOptions = {}): AppConfig {
+  const env = options.env ?? process.env;
+  const projectRoot = path.resolve(options.projectRoot ?? PROJECT_ROOT);
+  const errors: string[] = [];
 
   const host = (env.HOST === undefined ? '0.0.0.0' : env.HOST).trim();
   if (!host || /\s/.test(host)) {
@@ -142,14 +181,15 @@ function loadConfig(options = {}) {
   const trustProxy = readBoolean(errors, env, 'TRUST_PROXY', false);
   const corsOrigins = readCorsOrigins(errors, env);
 
-  const logLevel = (env.LOG_LEVEL === undefined ? 'info' : env.LOG_LEVEL)
+  const logLevelValue = (env.LOG_LEVEL === undefined ? 'info' : env.LOG_LEVEL)
     .trim()
     .toLowerCase();
-  if (!LOG_LEVELS.has(logLevel)) {
-    errors.push(`LOG_LEVEL must be one of: ${[...LOG_LEVELS].join(', ')}`);
+  const logLevel: LogLevel = isLogLevel(logLevelValue) ? logLevelValue : 'info';
+  if (!isLogLevel(logLevelValue)) {
+    errors.push(`LOG_LEVEL must be one of: ${LOG_LEVELS.join(', ')}`);
   }
 
-  const apiKey = (env.API_KEY || '').trim();
+  const apiKey = (env.API_KEY ?? '').trim();
   if (apiKey && apiKey.length < 16) {
     errors.push('API_KEY must contain at least 16 characters when enabled');
   }
@@ -167,9 +207,9 @@ function loadConfig(options = {}) {
   }
 
   return Object.freeze({
-    serviceName: pkg.name,
-    version: pkg.version,
-    environment: (env.NODE_ENV || 'development').trim() || 'development',
+    serviceName: PACKAGE_METADATA.name,
+    version: PACKAGE_METADATA.version,
+    environment: (env.NODE_ENV ?? 'development').trim() || 'development',
     host,
     port,
     dataFile: path.resolve(projectRoot, dataFileValue),
@@ -188,10 +228,3 @@ function loadConfig(options = {}) {
     shutdownTimeoutMs,
   });
 }
-
-module.exports = {
-  ConfigError,
-  LOG_LEVELS,
-  PROJECT_ROOT,
-  loadConfig,
-};

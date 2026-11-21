@@ -1,12 +1,19 @@
-'use strict';
+import type { AppConfig } from '../config';
+import type { RequestContext, RouteHandler } from '../context';
+import { sendJson } from '../http/respond';
+import type { Router } from '../http/router';
+import type { TaskStore } from '../store/task-store';
+import { createHealthHandler } from './health';
+import { createSystemHandler } from './system';
+import { createTaskHandlers } from './tasks';
 
-const { sendJson } = require('../http/respond');
-const { createHealthHandler } = require('./health');
-const { createSystemHandler } = require('./system');
-const { createTaskHandlers } = require('./tasks');
+export interface RegisterRoutesOptions {
+  readonly config: AppConfig;
+  readonly store: TaskStore;
+}
 
-function createRootHandler(config) {
-  return function root(ctx) {
+function createRootHandler(config: AppConfig): RouteHandler {
+  return function root(ctx: RequestContext): void {
     sendJson(ctx.req, ctx.res, 200, {
       service: config.serviceName,
       version: config.version,
@@ -17,10 +24,10 @@ function createRootHandler(config) {
   };
 }
 
-function createApiIndexHandler(config) {
+function createApiIndexHandler(config: AppConfig): RouteHandler {
   const auth = Boolean(config.apiKey);
 
-  return function apiIndex(ctx) {
+  return function apiIndex(ctx: RequestContext): void {
     sendJson(ctx.req, ctx.res, 200, {
       service: config.serviceName,
       version: config.version,
@@ -66,7 +73,7 @@ function createApiIndexHandler(config) {
   };
 }
 
-function registerRoutes(router, options) {
+export function registerRoutes(router: Router, options: RegisterRoutesOptions): void {
   const { config, store } = options;
   const tasks = createTaskHandlers(store);
 
@@ -81,8 +88,3 @@ function registerRoutes(router, options) {
   router.patch('/api/tasks/:id', tasks.update);
   router.delete('/api/tasks/:id', tasks.remove);
 }
-
-module.exports = {
-  createApiIndexHandler,
-  registerRoutes,
-};

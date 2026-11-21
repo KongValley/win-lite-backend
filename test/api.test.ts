@@ -1,8 +1,6 @@
-'use strict';
-
-const assert = require('node:assert/strict');
-const { describe, test } = require('node:test');
-const { createTestServer, requestJson } = require('../test-support/helpers');
+import assert from 'node:assert/strict';
+import { describe, test } from 'node:test';
+import { createTestServer, requestJson } from '../test-support/helpers';
 
 describe('service metadata', () => {
   test('serves root, health and system information', async (t) => {
@@ -13,7 +11,7 @@ describe('service metadata', () => {
     assert.equal(root.body.service, 'win-lite-backend');
     assert.equal(root.body.docs, '/api');
     assert.match(
-      root.response.headers.get('x-request-id'),
+      root.response.headers.get('x-request-id') ?? '',
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
     assert.equal(root.response.headers.get('x-content-type-options'), 'nosniff');
@@ -188,7 +186,9 @@ describe('task API', () => {
 
     const longUrl = await fetch(`${baseUrl}/api/tasks?q=${'a'.repeat(5000)}`);
     assert.equal(longUrl.status, 414);
-    const longUrlBody = await longUrl.json();
+    const longUrlBody = (await longUrl.json()) as {
+      error: { code: string };
+    };
     assert.equal(longUrlBody.error.code, 'URI_TOO_LONG');
   });
 
@@ -223,14 +223,8 @@ describe('CORS', () => {
       },
     });
     assert.equal(preflight.status, 204);
-    assert.equal(
-      preflight.headers.get('access-control-allow-origin'),
-      '*',
-    );
-    assert.match(
-      preflight.headers.get('access-control-allow-methods'),
-      /POST/,
-    );
+    assert.equal(preflight.headers.get('access-control-allow-origin'), '*');
+    assert.match(preflight.headers.get('access-control-allow-methods') ?? '', /POST/);
     assert.equal(preflight.headers.get('access-control-max-age'), '600');
 
     const actual = await requestJson(baseUrl, '/api/health', {
@@ -281,7 +275,7 @@ describe('authentication', () => {
     assert.equal(unauthorized.response.status, 401);
     assert.equal(unauthorized.body.error.code, 'UNAUTHORIZED');
     assert.match(
-      unauthorized.response.headers.get('www-authenticate'),
+      unauthorized.response.headers.get('www-authenticate') ?? '',
       /^Bearer/,
     );
 

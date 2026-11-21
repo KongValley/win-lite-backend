@@ -1,36 +1,50 @@
-'use strict';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import {
+  isTaskPriority,
+  type CreateTaskInput,
+  type Task,
+  type TaskListOptions,
+  type TaskListResult,
+  type UpdateTaskInput,
+} from '../domain';
+import { getErrorCode } from '../lib/errors';
 
-const crypto = require('node:crypto');
-const fs = require('node:fs/promises');
-const path = require('node:path');
-
-const STORE_VERSION = 1;
-const PRIORITIES = new Set(['low', 'medium', 'high']);
+export const STORE_VERSION = 1;
 const MAX_STORE_BYTES = 32 * 1024 * 1024;
 
-class StoreError extends Error {
-  constructor(message, options) {
+export class StoreError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = 'StoreError';
   }
 }
 
-function cloneTask(task) {
+export interface TaskStoreOptions {
+  readonly filePath: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function cloneTask(task: Task): Task {
   return { ...task };
 }
 
-function isNonEmptyString(value) {
+function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
-function isIsoTimestamp(value) {
+function isIsoTimestamp(value: unknown): value is string {
   return typeof value === 'string' && !Number.isNaN(Date.parse(value));
 }
 
-function validateStoredTask(task, index) {
+function validateStoredTask(task: unknown, index: number): asserts task is Task {
   const label = `tasks[${index}]`;
 
-  if (!task || typeof task !== 'object' || Array.isArray(task)) {
+  if (!isRecord(task)) {
     throw new StoreError(`${label} must be an object`);
   }
   if (!isNonEmptyString(task.id)) {
@@ -42,7 +56,7 @@ function validateStoredTask(task, index) {
   if (typeof task.description !== 'string') {
     throw new StoreError(`${label}.description must be a string`);
   }
-  if (!PRIORITIES.has(task.priority)) {
+  if (!isTaskPriority(task.priority)) {
     throw new StoreError(`${label}.priority must be low, medium or high`);
   }
   if (typeof task.completed !== 'boolean') {
@@ -53,9 +67,9 @@ function validateStoredTask(task, index) {
   }
 }
 
-async function replaceFile(source, destination) {
+async function replaceFile(source: string, destination: string): Promise<void> {
   const retryable = new Set(['EPERM', 'EACCES', 'EBUSY']);
-  let lastError;
+  let lastError: unknown;
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -63,11 +77,12 @@ async function replaceFile(source, destination) {
       return;
     } catch (error) {
       lastError = error;
+      const code = getErrorCode(error);
       // Antivirus/indexers on Windows can briefly lock the destination file.
-      if (!retryable.has(error.code) || attempt === 2) {
+      if (!code || !retryable.has(code) || attempt === 2) {
         throw error;
       }
-      await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
+      await new Promise<void>((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
     }
   }
 
@@ -79,26 +94,27 @@ async function replaceFile(source, destination) {
  * temporary file before an atomic rename, so a crash cannot leave a partially
  * written JSON document behind.
  */
-class TaskStore {
-  constructor(options) {
+export class TaskStore {
+  readonly filePath: string;
+  private tasks: Task[] = [];
+  private writeChain: Promise<void> = Promise.resolve();
+  private initPromise: Promise<void> | null = null;
+
+  constructor(options: TaskStoreOptions) {
     this.filePath = path.resolve(options.filePath);
-    this.logger = options.logger;
-    this.tasks = [];
-    this.writeChain = Promise.resolve();
-    this.initPromise = null;
   }
 
-  init() {
+  init(): Promise<void> {
     if (this.initPromise === null) {
       this.initPromise = this.#initialize();
     }
     return this.initPromise;
   }
 
-  async #initialize() {
+  async #initialize(): Promise<void> {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
 
-    let raw;
+    let raw = '';
     try {
       const stats = await fs.stat(this.filePath);
       if (stats.size > MAX_STORE_BYTES) {
@@ -108,7 +124,8 @@ class TaskStore {
       }
       raw = await fs.readFile(this.filePath, 'utf8');
     } catch (error) {
-      if (error.code !== 'ENOENT') {
+      const code = getErrorCode(error);
+      if (code !== 'ENOENT') {
         throw error instanceof StoreError
           ? error
           : new StoreError(`Unable to read data file: ${this.filePath}`, {
@@ -127,7 +144,7 @@ class TaskStore {
       raw = raw.slice(1);
     }
 
-    let document;
+    let document: unknown;
     try {
       document = JSON.parse(raw);
     } catch (error) {
@@ -136,43 +153,50 @@ class TaskStore {
       });
     }
 
-    const tasks = Array.isArray(document) ? document : document && document.tasks;
-    if (!Array.isArray(tasks)) {
+    let rawTasks: unknown[];
+    let version: unknown;
+    if (Array.isArray(document)) {
+      rawTasks = document;
+    } else if (isRecord(document) && Array.isArray(document.tasks)) {
+      rawTasks = document.tasks;
+      version = document.version;
+    } else {
       throw new StoreError(
         `Data file must contain a "tasks" array: ${this.filePath}`,
       );
     }
-    if (
-      !Array.isArray(document) &&
-      document.version !== undefined &&
-      document.version !== STORE_VERSION
-    ) {
+
+    if (!Array.isArray(document) && version !== undefined && version !== STORE_VERSION) {
       throw new StoreError(
-        `Unsupported data file version ${document.version}: ${this.filePath}`,
+        `Unsupported data file version ${String(version)}: ${this.filePath}`,
       );
     }
 
-    const ids = new Set();
-    tasks.forEach((task, index) => {
+    const ids = new Set<string>();
+    const validated: Task[] = [];
+    rawTasks.forEach((task, index) => {
       validateStoredTask(task, index);
       if (ids.has(task.id)) {
         throw new StoreError(`Duplicate task id at tasks[${index}]: ${task.id}`);
       }
       ids.add(task.id);
+      validated.push(task);
     });
 
-    this.tasks = tasks.map(cloneTask);
+    this.tasks = validated.map(cloneTask);
   }
 
-  async #writeSnapshot(tasks) {
+  async #writeSnapshot(tasks: readonly Task[]): Promise<void> {
     const directory = path.dirname(this.filePath);
     const temporaryPath = path.join(
       directory,
-      `.${path.basename(this.filePath)}.${process.pid}.${crypto
-        .randomBytes(6)
-        .toString('hex')}.tmp`,
+      `.${path.basename(this.filePath)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`,
     );
-    const document = `${JSON.stringify({ version: STORE_VERSION, tasks }, null, 2)}\n`;
+    const serialized = JSON.stringify({ version: STORE_VERSION, tasks }, null, 2);
+    if (serialized === undefined) {
+      throw new StoreError('Unable to serialize task data');
+    }
+    const document = `${serialized}\n`;
 
     try {
       const handle = await fs.open(temporaryPath, 'wx', 0o600);
@@ -192,7 +216,7 @@ class TaskStore {
     }
   }
 
-  #enqueue(operation) {
+  #enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.writeChain.then(operation);
     this.writeChain = result.then(
       () => undefined,
@@ -201,12 +225,12 @@ class TaskStore {
     return result;
   }
 
-  list(options = {}) {
-    const status = options.status || 'all';
-    const priority = options.priority || 'all';
-    const query = (options.q || '').toLowerCase();
-    const limit = options.limit === undefined ? 20 : options.limit;
-    const offset = options.offset === undefined ? 0 : options.offset;
+  list(options: TaskListOptions = {}): TaskListResult {
+    const status = options.status ?? 'all';
+    const priority = options.priority ?? 'all';
+    const query = (options.q ?? '').toLowerCase();
+    const limit = options.limit ?? 20;
+    const offset = options.offset ?? 0;
 
     const filtered = this.tasks.filter((task) => {
       if (status === 'open' && task.completed) {
@@ -233,16 +257,16 @@ class TaskStore {
     };
   }
 
-  get(id) {
+  get(id: string): Task | null {
     const task = this.tasks.find((candidate) => candidate.id === id);
     return task ? cloneTask(task) : null;
   }
 
-  create(input) {
+  create(input: CreateTaskInput): Promise<Task> {
     return this.#enqueue(async () => {
       const now = new Date().toISOString();
-      const task = {
-        id: crypto.randomUUID(),
+      const task: Task = {
+        id: randomUUID(),
         title: input.title,
         description: input.description,
         priority: input.priority,
@@ -258,7 +282,7 @@ class TaskStore {
     });
   }
 
-  update(id, patch) {
+  update(id: string, patch: UpdateTaskInput): Promise<Task | null> {
     return this.#enqueue(async () => {
       const index = this.tasks.findIndex((candidate) => candidate.id === id);
       if (index === -1) {
@@ -266,18 +290,26 @@ class TaskStore {
       }
 
       const current = this.tasks[index];
-      const updated = {
+      if (!current) {
+        return null;
+      }
+
+      const updated: Task = {
         ...current,
-        ...(Object.prototype.hasOwnProperty.call(patch, 'title')
+        ...(Object.prototype.hasOwnProperty.call(patch, 'title') &&
+        patch.title !== undefined
           ? { title: patch.title }
           : {}),
-        ...(Object.prototype.hasOwnProperty.call(patch, 'description')
+        ...(Object.prototype.hasOwnProperty.call(patch, 'description') &&
+        patch.description !== undefined
           ? { description: patch.description }
           : {}),
-        ...(Object.prototype.hasOwnProperty.call(patch, 'priority')
+        ...(Object.prototype.hasOwnProperty.call(patch, 'priority') &&
+        patch.priority !== undefined
           ? { priority: patch.priority }
           : {}),
-        ...(Object.prototype.hasOwnProperty.call(patch, 'completed')
+        ...(Object.prototype.hasOwnProperty.call(patch, 'completed') &&
+        patch.completed !== undefined
           ? { completed: patch.completed }
           : {}),
         updatedAt: new Date().toISOString(),
@@ -291,7 +323,7 @@ class TaskStore {
     });
   }
 
-  delete(id) {
+  delete(id: string): Promise<boolean> {
     return this.#enqueue(async () => {
       const index = this.tasks.findIndex((candidate) => candidate.id === id);
       if (index === -1) {
@@ -306,13 +338,7 @@ class TaskStore {
     });
   }
 
-  async flush() {
+  async flush(): Promise<void> {
     await this.writeChain;
   }
 }
-
-module.exports = {
-  STORE_VERSION,
-  StoreError,
-  TaskStore,
-};

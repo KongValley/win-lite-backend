@@ -1,7 +1,7 @@
-'use strict';
+import type { IncomingMessage } from 'node:http';
 
-function trimForwardedAddress(value) {
-  const first = value.split(',')[0].trim();
+function trimForwardedAddress(value: string): string | null {
+  const first = value.split(',')[0]?.trim() ?? '';
   return first.length > 0 ? first.slice(0, 128) : null;
 }
 
@@ -9,7 +9,7 @@ function trimForwardedAddress(value) {
  * Resolve the client address used for rate limiting and request logs. Forwarded
  * headers are only trusted when TRUST_PROXY=true, because clients can forge them.
  */
-function getClientIp(req, trustProxy) {
+export function getClientIp(req: IncomingMessage, trustProxy: boolean): string {
   if (trustProxy) {
     const forwarded = req.headers['x-forwarded-for'];
     if (typeof forwarded === 'string') {
@@ -20,12 +20,10 @@ function getClientIp(req, trustProxy) {
     }
   }
 
-  const address = req.socket && req.socket.remoteAddress;
+  const address = req.socket.remoteAddress;
   if (!address) {
     return 'unknown';
   }
 
   return address.startsWith('::ffff:') ? address.slice(7) : address;
 }
-
-module.exports = { getClientIp };

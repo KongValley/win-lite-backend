@@ -1,9 +1,11 @@
-'use strict';
+import type { AppConfig } from '../config';
+import type { RequestContext } from '../context';
+import { sendJson } from '../http/respond';
 
-const { sendJson } = require('../http/respond');
-
-function createHealthHandler(config) {
-  return function health(ctx) {
+export function createHealthHandler(
+  config: AppConfig,
+): (ctx: RequestContext) => void {
+  return function health(ctx): void {
     sendJson(ctx.req, ctx.res, 200, {
       status: 'ok',
       service: config.serviceName,
@@ -19,5 +21,3 @@ function createHealthHandler(config) {
     });
   };
 }
-
-module.exports = { createHealthHandler };

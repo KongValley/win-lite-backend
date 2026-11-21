@@ -1,11 +1,10 @@
-'use strict';
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import type { RouteHandler } from '../src/context';
+import { HttpError } from '../src/lib/http-error';
+import { Router, normalizePathname } from '../src/http/router';
 
-const assert = require('node:assert/strict');
-const { test } = require('node:test');
-const { HttpError } = require('../src/lib/http-error');
-const { Router, normalizePathname } = require('../src/http/router');
-
-function handler() {}
+const handler: RouteHandler = () => {};
 
 test('prefers static routes over parameter routes', () => {
   const router = new Router();
@@ -13,9 +12,12 @@ test('prefers static routes over parameter routes', () => {
   router.get('/api/tasks/stats', handler);
 
   const staticMatch = router.match('GET', '/api/tasks/stats');
+  assert.ok(staticMatch.route);
   assert.equal(staticMatch.route.path, '/api/tasks/stats');
 
   const dynamicMatch = router.match('GET', '/api/tasks/abc');
+  assert.ok(dynamicMatch.route);
+  assert.ok(dynamicMatch.params);
   assert.equal(dynamicMatch.route.path, '/api/tasks/:id');
   assert.equal(dynamicMatch.params.id, 'abc');
 });
@@ -26,6 +28,7 @@ test('maps HEAD to GET and reports allowed methods for 405', () => {
   router.post('/api/tasks', handler);
 
   const head = router.match('HEAD', '/api/tasks');
+  assert.ok(head.route);
   assert.equal(head.route.path, '/api/tasks');
 
   const notAllowed = router.match('PUT', '/api/tasks');
@@ -43,11 +46,12 @@ test('decodes parameters and rejects invalid URL encoding', () => {
   router.get('/files/:name', handler);
 
   const match = router.match('GET', '/files/hello%20world');
+  assert.ok(match.params);
   assert.equal(match.params.name, 'hello world');
 
   assert.throws(
     () => router.match('GET', '/files/%E0%A4%A'),
-    (error) => {
+    (error: unknown) => {
       assert.ok(error instanceof HttpError);
       assert.equal(error.status, 400);
       assert.equal(error.code, 'INVALID_PATH');

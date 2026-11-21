@@ -1,30 +1,29 @@
-'use strict';
-
-const crypto = require('node:crypto');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const pkg = require('../package.json');
-const { loadConfig, PROJECT_ROOT } = require('../src/config');
-const { loadEnvFile } = require('../src/lib/env-file');
-const { getNodeSupport, MIN_NODE_VERSION_STRING } = require('../src/lib/runtime');
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { PROJECT_ROOT, loadConfig } from './config';
+import { loadEnvFile } from './lib/env-file';
+import { getErrorCode, getErrorMessage } from './lib/errors';
+import { PACKAGE_METADATA } from './lib/project';
+import { MIN_NODE_VERSION_STRING, getNodeSupport } from './lib/runtime';
 
 let failures = 0;
 
-function pass(label, detail) {
+function pass(label: string, detail?: string): void {
   console.log(`[OK]   ${label}${detail ? `: ${detail}` : ''}`);
 }
 
-function warn(label, detail) {
+function warn(label: string, detail?: string): void {
   console.log(`[WARN] ${label}${detail ? `: ${detail}` : ''}`);
 }
 
-function fail(label, detail) {
+function fail(label: string, detail?: string): void {
   failures += 1;
   console.log(`[FAIL] ${label}${detail ? `: ${detail}` : ''}`);
 }
 
-function checkDataDirectory(dataFile) {
+function checkDataDirectory(dataFile: string): void {
   const directory = path.dirname(dataFile);
   const temporaryFile = path.join(
     directory,
@@ -42,12 +41,12 @@ function checkDataDirectory(dataFile) {
     } catch {
       // Best effort cleanup.
     }
-    fail('数据目录不可写', `${directory} (${error.code || error.message})`);
+    fail('数据目录不可写', `${directory} (${getErrorCode(error) ?? getErrorMessage(error)})`);
   }
 }
 
-function main() {
-  console.log(`\n${pkg.name} ${pkg.version} - environment check`);
+function main(): void {
+  console.log(`\n${PACKAGE_METADATA.name} ${PACKAGE_METADATA.version} - environment check`);
   console.log('-'.repeat(64));
 
   const nodeSupport = getNodeSupport();
@@ -92,7 +91,7 @@ function main() {
     const loaded = loadEnvFile(path.join(PROJECT_ROOT, '.env'));
     pass('.env', loaded.length > 0 ? `已加载 ${loaded.length} 个变量` : '未创建或没有新变量');
   } catch (error) {
-    fail('.env 解析失败', error.message);
+    fail('.env 解析失败', getErrorMessage(error));
   }
 
   let config;
@@ -105,8 +104,8 @@ function main() {
       }, API Key ${config.apiKey ? '开启' : '关闭'}`,
     );
   } catch (error) {
-    fail('配置无效', error.message.replace(/\n/g, ' '));
-    console.log(`\n结论: 请先修正配置。`);
+    fail('配置无效', getErrorMessage(error).replace(/\n/g, ' '));
+    console.log('\n结论: 请先修正配置。');
     process.exitCode = 1;
     return;
   }
@@ -120,7 +119,7 @@ function main() {
     warn('限流', '已关闭 (RATE_LIMIT_MAX=0)');
   }
 
-  const dependencyCount = Object.keys(pkg.dependencies || {}).length;
+  const dependencyCount = Object.keys(PACKAGE_METADATA.dependencies).length;
   if (dependencyCount === 0) {
     pass('运行时依赖', '0 个（仅使用 Node.js 内置模块）');
   } else {
@@ -131,7 +130,7 @@ function main() {
 
   console.log('-'.repeat(64));
   console.log(
-    'Windows 32/64 位说明: 同一份代码无需重新编译。' +
+    'Windows 32/64 位说明: 同一份 TypeScript 编译产物无需按处理器位数重新编译。' +
       ' Node.js 22 LTS 是最后一个提供官方 win-x86 构建的版本，' +
       '32 位系统请使用 Node.js 22 LTS x86。',
   );
@@ -147,6 +146,10 @@ function main() {
 try {
   main();
 } catch (error) {
-  console.error(`[doctor] Unexpected failure: ${error.stack || error.message}`);
+  console.error(
+    `[doctor] Unexpected failure: ${
+      error instanceof Error ? error.stack ?? error.message : String(error)
+    }`,
+  );
   process.exitCode = 1;
 }

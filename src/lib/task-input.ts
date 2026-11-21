@@ -1,12 +1,25 @@
-'use strict';
+import {
+  TASK_PRIORITIES,
+  isTaskPriority,
+  type CreateTaskInput,
+  type TaskListQuery,
+  type TaskPriority,
+  type UpdateTaskInput,
+} from '../domain';
+import { badRequest } from './http-error';
 
-const { badRequest } = require('./http-error');
-
-const PRIORITIES = ['low', 'medium', 'high'];
 const TASK_FIELDS = new Set(['title', 'description', 'priority', 'completed']);
-const HAS_OWN = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+const HAS_OWN = (object: object, key: PropertyKey): boolean =>
+  Object.prototype.hasOwnProperty.call(object, key);
 
-function unknownFieldErrors(body) {
+interface ValidationDetail {
+  readonly field: string;
+  readonly message: string;
+}
+
+export { TASK_PRIORITIES as PRIORITIES };
+
+function unknownFieldErrors(body: Record<string, unknown>): ValidationDetail[] {
   const unknown = Object.keys(body).filter((key) => !TASK_FIELDS.has(key));
   if (unknown.length === 0) {
     return [];
@@ -25,7 +38,11 @@ function unknownFieldErrors(body) {
   ];
 }
 
-function parseTitle(value, errors, required) {
+function parseTitle(
+  value: unknown,
+  errors: ValidationDetail[],
+  required: boolean,
+): string | undefined {
   if (value === undefined) {
     if (required) {
       errors.push({ field: 'title', message: 'is required' });
@@ -50,7 +67,10 @@ function parseTitle(value, errors, required) {
   return title;
 }
 
-function parseDescription(value, errors) {
+function parseDescription(
+  value: unknown,
+  errors: ValidationDetail[],
+): string | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -73,21 +93,27 @@ function parseDescription(value, errors) {
   return description;
 }
 
-function parsePriority(value, errors) {
+function parsePriority(
+  value: unknown,
+  errors: ValidationDetail[],
+): TaskPriority | undefined {
   if (value === undefined) {
     return undefined;
   }
-  if (typeof value !== 'string' || !PRIORITIES.includes(value)) {
+  if (!isTaskPriority(value)) {
     errors.push({
       field: 'priority',
-      message: `must be one of: ${PRIORITIES.join(', ')}`,
+      message: `must be one of: ${TASK_PRIORITIES.join(', ')}`,
     });
     return undefined;
   }
   return value;
 }
 
-function parseCompleted(value, errors) {
+function parseCompleted(
+  value: unknown,
+  errors: ValidationDetail[],
+): boolean | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -98,7 +124,7 @@ function parseCompleted(value, errors) {
   return value;
 }
 
-function throwIfInvalid(errors) {
+function throwIfInvalid(errors: ValidationDetail[]): void {
   if (errors.length > 0) {
     throw badRequest(
       'VALIDATION_ERROR',
@@ -108,21 +134,34 @@ function throwIfInvalid(errors) {
   }
 }
 
-function normalizeCreateInput(body) {
+export function normalizeCreateInput(
+  body: Record<string, unknown>,
+): CreateTaskInput {
   const errors = unknownFieldErrors(body);
-  const result = {
-    title: parseTitle(body.title, errors, true),
-    description: parseDescription(body.description, errors) ?? '',
-    priority: parsePriority(body.priority, errors) ?? 'medium',
-    completed: parseCompleted(body.completed, errors) ?? false,
-  };
+  const title = parseTitle(body.title, errors, true);
+  const description = parseDescription(body.description, errors) ?? '';
+  const priority = parsePriority(body.priority, errors) ?? 'medium';
+  const completed = parseCompleted(body.completed, errors) ?? false;
   throwIfInvalid(errors);
-  return result;
+
+  return {
+    title: title as string,
+    description,
+    priority,
+    completed,
+  };
 }
 
-function normalizeUpdateInput(body) {
+export function normalizeUpdateInput(
+  body: Record<string, unknown>,
+): UpdateTaskInput {
   const errors = unknownFieldErrors(body);
-  const patch = {};
+  const patch: {
+    title?: string;
+    description?: string;
+    priority?: TaskPriority;
+    completed?: boolean;
+  } = {};
   let hasField = false;
 
   if (HAS_OWN(body, 'title')) {
@@ -165,7 +204,14 @@ function normalizeUpdateInput(body) {
   return patch;
 }
 
-function parsePositiveInteger(errors, value, field, fallback, min, max) {
+function parseNonNegativeInteger(
+  errors: ValidationDetail[],
+  value: string | null,
+  field: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
   if (value === null) {
     return fallback;
   }
@@ -182,11 +228,11 @@ function parsePositiveInteger(errors, value, field, fallback, min, max) {
   return parsed;
 }
 
-function parseListQuery(searchParams) {
-  const errors = [];
-  const status = (searchParams.get('status') || 'all').toLowerCase();
-  const priority = (searchParams.get('priority') || 'all').toLowerCase();
-  const q = (searchParams.get('q') || '').trim();
+export function parseListQuery(searchParams: URLSearchParams): TaskListQuery {
+  const errors: ValidationDetail[] = [];
+  const status = (searchParams.get('status') ?? 'all').toLowerCase();
+  const priority = (searchParams.get('priority') ?? 'all').toLowerCase();
+  const q = (searchParams.get('q') ?? '').trim();
 
   if (!['all', 'open', 'completed'].includes(status)) {
     errors.push({
@@ -194,17 +240,17 @@ function parseListQuery(searchParams) {
       message: 'must be one of: all, open, completed',
     });
   }
-  if (!['all', ...PRIORITIES].includes(priority)) {
+  if (!['all', ...TASK_PRIORITIES].includes(priority)) {
     errors.push({
       field: 'priority',
-      message: `must be one of: all, ${PRIORITIES.join(', ')}`,
+      message: `must be one of: all, ${TASK_PRIORITIES.join(', ')}`,
     });
   }
   if (q.length > 100) {
     errors.push({ field: 'q', message: 'must not exceed 100 characters' });
   }
 
-  const limit = parsePositiveInteger(
+  const limit = parseNonNegativeInteger(
     errors,
     searchParams.get('limit'),
     'limit',
@@ -212,7 +258,7 @@ function parseListQuery(searchParams) {
     1,
     100,
   );
-  const offset = parsePositiveInteger(
+  const offset = parseNonNegativeInteger(
     errors,
     searchParams.get('offset'),
     'offset',
@@ -229,12 +275,11 @@ function parseListQuery(searchParams) {
     );
   }
 
-  return { status, priority, q, limit, offset };
+  return {
+    status: status as TaskListQuery['status'],
+    priority: priority as TaskListQuery['priority'],
+    q,
+    limit,
+    offset,
+  };
 }
-
-module.exports = {
-  PRIORITIES,
-  normalizeCreateInput,
-  normalizeUpdateInput,
-  parseListQuery,
-};

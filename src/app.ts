@@ -1,24 +1,44 @@
-'use strict';
-
-const crypto = require('node:crypto');
-const { performance } = require('node:perf_hooks');
-const { Router, METHOD_ORDER, normalizePathname } = require('./http/router');
-const { readJsonBody } = require('./http/body');
-const { sendJson } = require('./http/respond');
-const {
-  HttpError,
-  notFound,
-  methodNotAllowed,
-} = require('./lib/http-error');
-const { getClientIp } = require('./lib/network');
-const { createCors } = require('./middleware/cors');
-const { createApiKeyVerifier } = require('./middleware/auth');
-const { RateLimiter } = require('./middleware/rate-limit');
-const { registerRoutes } = require('./routes');
+import { randomUUID } from 'node:crypto';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { performance } from 'node:perf_hooks';
+import { URL } from 'node:url';
+import type { AppConfig } from './config';
+import type { RequestContext } from './context';
+import { readJsonBody } from './http/body';
+import { sendJson } from './http/respond';
+import { METHOD_ORDER, Router, normalizePathname } from './http/router';
+import { HttpError, methodNotAllowed, notFound } from './lib/http-error';
+import type { Logger } from './lib/logger';
+import { getClientIp } from './lib/network';
+import { createApiKeyVerifier } from './middleware/auth';
+import { createCors } from './middleware/cors';
+import { RateLimiter } from './middleware/rate-limit';
+import { registerRoutes } from './routes';
+import type { TaskStore } from './store/task-store';
 
 const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH']);
 
-function applySecurityHeaders(res, requestId) {
+export interface CreateAppOptions {
+  readonly config: AppConfig;
+  readonly logger: Logger;
+  readonly store: TaskStore;
+}
+
+export interface App {
+  handler(req: IncomingMessage, res: ServerResponse): void;
+  close(): void;
+  readonly router: Router;
+}
+
+interface RequestMeta {
+  readonly requestId: string;
+  readonly ip: string;
+  readonly startedAt: number;
+  pathname: string | null;
+  routePath: string | null;
+}
+
+function applySecurityHeaders(res: ServerResponse, requestId: string): void {
   res.setHeader('X-Request-Id', requestId);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -31,7 +51,7 @@ function applySecurityHeaders(res, requestId) {
   res.setHeader('Cache-Control', 'no-store');
 }
 
-function buildAllowHeader(allowed, corsEnabled) {
+function buildAllowHeader(allowed: readonly string[], corsEnabled: boolean): string {
   const methods = new Set(allowed);
   if (methods.has('GET')) {
     methods.add('HEAD');
@@ -42,17 +62,17 @@ function buildAllowHeader(allowed, corsEnabled) {
   return METHOD_ORDER.filter((method) => methods.has(method)).join(', ');
 }
 
-function isApiPath(pathname) {
+function isApiPath(pathname: string): boolean {
   return pathname === '/api' || pathname.startsWith('/api/');
 }
 
-function logPath(req) {
-  return String(req.url || '/')
+function logPath(req: IncomingMessage): string {
+  return String(req.url ?? '/')
     .split('?')[0]
-    .slice(0, 4096);
+    ?.slice(0, 4096) ?? '/';
 }
 
-function createApp(options) {
+export function createApp(options: CreateAppOptions): App {
   const { config, logger, store } = options;
   const router = new Router();
   registerRoutes(router, { config, store });
@@ -69,13 +89,18 @@ function createApp(options) {
     ? createApiKeyVerifier(config.apiKey)
     : null;
 
-  function sendError(req, res, error, meta) {
+  function sendError(
+    req: IncomingMessage,
+    res: ServerResponse,
+    error: unknown,
+    meta: RequestMeta,
+  ): void {
     if (res.writableEnded) {
       logger.error('request.error_after_response', {
         err: error,
         requestId: meta.requestId,
         method: req.method,
-        path: meta.pathname || logPath(req),
+        path: meta.pathname ?? logPath(req),
       });
       return;
     }
@@ -85,26 +110,27 @@ function createApp(options) {
         err: error,
         requestId: meta.requestId,
         method: req.method,
-        path: meta.pathname || logPath(req),
+        path: meta.pathname ?? logPath(req),
       });
       res.destroy();
       return;
     }
 
-    const known = error instanceof HttpError && error.expose !== false;
+    const known =
+      error instanceof HttpError && error.expose !== false ? error : null;
     const status =
-      known && Number.isInteger(error.status) && error.status >= 400 && error.status <= 599
-        ? error.status
+      known && Number.isInteger(known.status) && known.status >= 400 && known.status <= 599
+        ? known.status
         : 500;
-    const code = known ? error.code : 'INTERNAL_ERROR';
-    const message = known ? error.message : 'Internal server error';
-    const details = known ? error.details : undefined;
-    const headers = known ? error.headers : {};
+    const code = known?.code ?? 'INTERNAL_ERROR';
+    const message = known?.message ?? 'Internal server error';
+    const details = known?.details;
+    const headers = known?.headers ?? {};
 
-    const logFields = {
+    const logFields: Record<string, unknown> = {
       requestId: meta.requestId,
       method: req.method,
-      path: meta.pathname || logPath(req),
+      path: meta.pathname ?? logPath(req),
       status,
       code,
     };
@@ -135,11 +161,15 @@ function createApp(options) {
     }
   }
 
-  async function dispatch(req, res, meta) {
+  async function dispatch(
+    req: IncomingMessage,
+    res: ServerResponse,
+    meta: RequestMeta,
+  ): Promise<void> {
     applySecurityHeaders(res, meta.requestId);
 
     try {
-      const rawUrl = req.url || '/';
+      const rawUrl = req.url ?? '/';
       if (Buffer.byteLength(rawUrl, 'utf8') > config.maxUrlLength) {
         throw new HttpError(
           414,
@@ -148,7 +178,7 @@ function createApp(options) {
         );
       }
 
-      let url;
+      let url: URL;
       try {
         url = new URL(rawUrl, 'http://localhost');
       } catch {
@@ -157,7 +187,6 @@ function createApp(options) {
 
       const pathname = normalizePathname(url.pathname);
       meta.pathname = pathname;
-      meta.url = url;
 
       cors.apply(req, res);
 
@@ -178,35 +207,33 @@ function createApp(options) {
         }
       }
 
-      const match = router.match(req.method, pathname);
-      meta.routePath = match.route ? match.route.path : null;
+      const method = req.method ?? 'GET';
+      const match = router.match(method, pathname);
+      const route = match.route;
+      meta.routePath = route?.path ?? null;
 
-      if (!match.route) {
+      if (!route) {
         if (match.pathMatched) {
           throw methodNotAllowed(buildAllowHeader(match.allowed, cors.enabled));
         }
         throw notFound('ROUTE_NOT_FOUND', 'Route not found');
       }
 
-      if (
-        verifyApiKey &&
-        isApiPath(pathname) &&
-        match.route.options.public !== true
-      ) {
+      if (verifyApiKey && isApiPath(pathname) && route.options.public !== true) {
         verifyApiKey(req);
       }
 
-      let body = {};
-      if (BODY_METHODS.has(req.method)) {
+      let body: Record<string, unknown> = {};
+      if (BODY_METHODS.has(method)) {
         body = await readJsonBody(req, config.bodyLimitBytes);
       }
 
-      const context = {
+      const context: RequestContext = {
         req,
         res,
         url,
         pathname,
-        params: match.params,
+        params: match.params ?? {},
         body,
         requestId: meta.requestId,
         ip: meta.ip,
@@ -215,11 +242,11 @@ function createApp(options) {
         store,
       };
 
-      await match.route.handler(context);
+      await route.handler(context);
 
       if (!res.writableEnded) {
         throw new Error(
-          `Route handler did not send a response: ${req.method} ${pathname}`,
+          `Route handler did not send a response: ${method} ${pathname}`,
         );
       }
     } catch (error) {
@@ -227,10 +254,9 @@ function createApp(options) {
     }
   }
 
-  function handler(req, res) {
-    const requestId = crypto.randomUUID();
-    const meta = {
-      requestId,
+  function handler(req: IncomingMessage, res: ServerResponse): void {
+    const meta: RequestMeta = {
+      requestId: randomUUID(),
       ip: getClientIp(req, config.trustProxy),
       startedAt: performance.now(),
       pathname: null,
@@ -238,16 +264,16 @@ function createApp(options) {
     };
     let logged = false;
 
-    function finalize(aborted) {
+    function finalize(aborted: boolean): void {
       if (logged) {
         return;
       }
       logged = true;
 
-      const fields = {
-        requestId,
+      const fields: Record<string, unknown> = {
+        requestId: meta.requestId,
         method: req.method,
-        path: meta.pathname || logPath(req),
+        path: meta.pathname ?? logPath(req),
         status: res.statusCode,
         durationMs: Math.round((performance.now() - meta.startedAt) * 10) / 10,
         contentLength: Number(res.getHeader('Content-Length')) || 0,
@@ -266,7 +292,7 @@ function createApp(options) {
     }
 
     req.once('error', (error) => {
-      logger.debug('request.error', { err: error, requestId });
+      logger.debug('request.error', { err: error, requestId: meta.requestId });
     });
     res.once('finish', () => finalize(false));
     res.once('close', () => {
@@ -275,15 +301,15 @@ function createApp(options) {
       }
     });
     res.once('error', (error) => {
-      logger.debug('response.error', { err: error, requestId });
+      logger.debug('response.error', { err: error, requestId: meta.requestId });
     });
 
-    dispatch(req, res, meta).catch((error) => {
+    dispatch(req, res, meta).catch((error: unknown) => {
       logger.error('request.fatal_error', {
         err: error,
-        requestId,
+        requestId: meta.requestId,
         method: req.method,
-        path: meta.pathname || logPath(req),
+        path: meta.pathname ?? logPath(req),
       });
 
       if (res.writableEnded) {
@@ -295,13 +321,13 @@ function createApp(options) {
       }
 
       try {
-        applySecurityHeaders(res, requestId);
+        applySecurityHeaders(res, meta.requestId);
         sendJson(req, res, 500, {
           error: {
             code: 'INTERNAL_ERROR',
             message: 'Internal server error',
           },
-          requestId,
+          requestId: meta.requestId,
         });
       } catch {
         res.destroy();
@@ -309,7 +335,7 @@ function createApp(options) {
     });
   }
 
-  function close() {
+  function close(): void {
     if (rateLimiter) {
       rateLimiter.close();
     }
@@ -321,5 +347,3 @@ function createApp(options) {
     router,
   };
 }
-
-module.exports = { createApp };

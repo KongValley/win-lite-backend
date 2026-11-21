@@ -1,17 +1,16 @@
-'use strict';
-
-const { TextDecoder } = require('node:util');
-const {
+import type { IncomingMessage } from 'node:http';
+import { TextDecoder } from 'node:util';
+import {
   HttpError,
   badRequest,
   payloadTooLarge,
   unsupportedMediaType,
-} = require('../lib/http-error');
+} from '../lib/http-error';
 
 const JSON_CONTENT_TYPE =
   /^\s*application\/(?:[A-Za-z0-9!#$&^_.+-]+\+)?json(?:\s*;|$)/i;
 
-function requestHasBody(req) {
+function requestHasBody(req: IncomingMessage): boolean {
   if (req.headers['transfer-encoding'] !== undefined) {
     return true;
   }
@@ -27,12 +26,11 @@ function requestHasBody(req) {
 
 /**
  * Read and parse a JSON request body with a hard size limit.
- *
- * @param {import('node:http').IncomingMessage} req
- * @param {number} limitBytes
- * @returns {Promise<Record<string, unknown>>}
  */
-function readJsonBody(req, limitBytes) {
+export function readJsonBody(
+  req: IncomingMessage,
+  limitBytes: number,
+): Promise<Record<string, unknown>> {
   if (!requestHasBody(req)) {
     return Promise.resolve({});
   }
@@ -47,7 +45,7 @@ function readJsonBody(req, limitBytes) {
     );
   }
 
-  const contentType = req.headers['content-type'] || '';
+  const contentType = req.headers['content-type'] ?? '';
   if (!JSON_CONTENT_TYPE.test(contentType)) {
     return Promise.reject(
       unsupportedMediaType('Content-Type must be application/json'),
@@ -59,12 +57,12 @@ function readJsonBody(req, limitBytes) {
     return Promise.reject(payloadTooLarge(limitBytes));
   }
 
-  return new Promise((resolve, reject) => {
-    const chunks = [];
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
+    const chunks: Buffer[] = [];
     let totalBytes = 0;
     let settled = false;
 
-    function cleanup() {
+    function cleanup(): void {
       req.off('data', onData);
       req.off('end', onEnd);
       req.off('aborted', onAborted);
@@ -73,7 +71,7 @@ function readJsonBody(req, limitBytes) {
       // event on a stream would terminate the process.
     }
 
-    function fail(error) {
+    function fail(error: HttpError): void {
       if (settled) {
         return;
       }
@@ -85,7 +83,7 @@ function readJsonBody(req, limitBytes) {
       reject(error);
     }
 
-    function onData(chunk) {
+    function onData(chunk: Buffer): void {
       totalBytes += chunk.length;
       if (totalBytes > limitBytes) {
         fail(payloadTooLarge(limitBytes));
@@ -94,14 +92,14 @@ function readJsonBody(req, limitBytes) {
       chunks.push(chunk);
     }
 
-    function onEnd() {
+    function onEnd(): void {
       if (settled) {
         return;
       }
       settled = true;
       cleanup();
 
-      let text;
+      let text: string;
       try {
         text = new TextDecoder('utf-8', { fatal: true }).decode(
           Buffer.concat(chunks),
@@ -116,7 +114,7 @@ function readJsonBody(req, limitBytes) {
         return;
       }
 
-      let parsed;
+      let parsed: unknown;
       try {
         parsed = JSON.parse(text);
       } catch {
@@ -129,14 +127,14 @@ function readJsonBody(req, limitBytes) {
         return;
       }
 
-      resolve(parsed);
+      resolve(parsed as Record<string, unknown>);
     }
 
-    function onError() {
+    function onError(): void {
       fail(new HttpError(400, 'REQUEST_ERROR', 'Unable to read request body'));
     }
 
-    function onAborted() {
+    function onAborted(): void {
       fail(new HttpError(400, 'REQUEST_ABORTED', 'Request was aborted'));
     }
 
@@ -147,8 +145,4 @@ function readJsonBody(req, limitBytes) {
   });
 }
 
-module.exports = {
-  JSON_CONTENT_TYPE,
-  readJsonBody,
-  requestHasBody,
-};
+export { JSON_CONTENT_TYPE, requestHasBody };
